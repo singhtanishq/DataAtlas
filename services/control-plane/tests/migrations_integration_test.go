@@ -3,7 +3,7 @@
 // Integration tests for the SQL migration suite. Requires the local
 // infrastructure (docker compose up -d) and TEST_DATABASE_URL pointing at a
 // disposable database; defaults to the local development database.
-package db_test
+package tests_test
 
 import (
 	"context"

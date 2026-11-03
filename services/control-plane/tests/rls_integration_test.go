@@ -3,7 +3,7 @@
 // Cross-tenant isolation tests: with Row-Level Security enforced, a session
 // scoped to Organization B must never see Organization A's rows, and
 // sessions that do not set the tenant GUC must fail closed.
-package db_test
+package tests_test
 
 import (
 	"context"

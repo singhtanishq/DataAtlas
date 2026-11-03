@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -11,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/api"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/auth"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/config"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/db"
 )
 
 const serverReadHeaderTimeout = 10 * time.Second
@@ -29,11 +28,27 @@ func main() {
 	logger := newLogger(cfg.LogLevel, cfg.AppEnv)
 	slog.SetDefault(logger)
 
-	router := buildRouter(cfg, logger)
+	ctx := context.Background()
+
+	var authSvc *auth.Service
+	if cfg.DatabaseURL != "" {
+		pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+		if err != nil {
+			logger.Error("failed to connect to database", "error", err)
+			os.Exit(1)
+		}
+		defer pool.Close()
+		authSvc = auth.NewService(pool)
+		logger.Info("database connection pool established")
+	} else {
+		logger.Warn("DATABASE_URL not set; auth endpoints disabled")
+	}
+
+	handler := api.NewServer(cfg, authSvc, logger)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           router,
+		Handler:           handler,
 		ReadHeaderTimeout: serverReadHeaderTimeout,
 	}
 
@@ -63,83 +78,6 @@ func main() {
 	}
 
 	logger.Info("control plane stopped")
-}
-
-func buildRouter(cfg *config.Config, logger *slog.Logger) http.Handler {
-	r := chi.NewRouter()
-
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Use(requestLogger(logger))
-	r.Use(middleware.Recoverer)
-
-	r.Get("/healthz", healthHandler(cfg))
-	r.Get("/readyz", readyHandler(cfg))
-	r.Get("/version", versionHandler(cfg))
-
-	return r
-}
-
-// requestLogger emits one structured log line per request with timing.
-func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			ww := middleware.NewWrapResponseWriter(w, req.ProtoMajor)
-			start := time.Now()
-			defer func() {
-				logger.Info("http_request",
-					"method", req.Method,
-					"path", req.URL.Path,
-					"status", ww.Status(),
-					"bytes", ww.BytesWritten(),
-					"duration_ms", time.Since(start).Milliseconds(),
-					"request_id", middleware.GetReqID(req.Context()),
-				)
-			}()
-			next.ServeHTTP(ww, req)
-		})
-	}
-}
-
-func healthHandler(cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":   "ok",
-			"service":  "control-plane",
-			"env":      cfg.AppEnv,
-			"time_utc": time.Now().UTC().Format(time.RFC3339),
-		})
-	}
-}
-
-// readyHandler reports dependency readiness. Dependencies are wired in
-// later milestones; until then the process reports ready once serving.
-func readyHandler(cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		status := http.StatusOK
-		writeJSON(w, status, map[string]any{
-			"status": "ready",
-			"env":    cfg.AppEnv,
-			"checks": map[string]string{},
-		})
-	}
-}
-
-func versionHandler(cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{
-			"service": "control-plane",
-			"version": cfg.Version,
-		})
-	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		slog.Error("failed to encode response", "error", err)
-	}
 }
 
 func newLogger(level, env string) *slog.Logger {
