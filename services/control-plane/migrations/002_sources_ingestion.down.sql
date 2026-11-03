@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS connector_checkpoints;
+DROP TABLE IF EXISTS ingestion_run_logs;
+DROP TABLE IF EXISTS ingestion_runs;
+DROP TABLE IF EXISTS ingestion_schedules;
+DROP TABLE IF EXISTS ingestion_pipelines;
+DROP TABLE IF EXISTS source_credentials;
+DROP TABLE IF EXISTS data_source_status_history;
+DROP TABLE IF EXISTS data_sources;
+DROP TABLE IF EXISTS connector_definitions;

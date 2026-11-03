@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS column_classifications;
+DROP TABLE IF EXISTS asset_classifications;
+DROP TABLE IF EXISTS classification_rules;
+DROP TABLE IF EXISTS ownership_assignments;
+DROP TABLE IF EXISTS asset_tags;
+DROP TABLE IF EXISTS tags;
+DROP TABLE IF EXISTS glossary_term_assets;
+DROP TABLE IF EXISTS glossary_term_relationships;
+DROP TABLE IF EXISTS glossary_terms;
+DROP TABLE IF EXISTS business_glossaries;

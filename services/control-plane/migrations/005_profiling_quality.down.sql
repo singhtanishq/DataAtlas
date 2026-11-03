@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS freshness_records;
+DROP TABLE IF EXISTS quality_incidents;
+DROP TABLE IF EXISTS quality_results;
+DROP TABLE IF EXISTS quality_runs;
+DROP TABLE IF EXISTS quality_checks;
+DROP TABLE IF EXISTS quality_suites;
+DROP TABLE IF EXISTS column_profiles;
+DROP TABLE IF EXISTS profile_snapshots;
+DROP TABLE IF EXISTS profiling_runs;

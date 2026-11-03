@@ -5,7 +5,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 
-.PHONY: help infra-up infra-down infra-observability dev web-dev control-plane-dev ingestion-dev test lint build clean
+.PHONY: help infra-up infra-down infra-observability dev web-dev control-plane-dev ingestion-dev test lint build migrate migrate-status clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -39,6 +39,12 @@ lint: ## Run all linters
 
 build: ## Build all application components
 	@bash scripts/build.sh
+
+migrate: ## Run database migrations (apply all pending)
+	@bash scripts/migrate.sh up
+
+migrate-status: ## Show database migration status
+	@bash scripts/migrate.sh status
 
 clean: ## Remove disposable build artifacts
 	rm -rf apps/web/.next apps/web/node_modules/.cache services/control-plane/bin .pytest_cache .ruff_cache

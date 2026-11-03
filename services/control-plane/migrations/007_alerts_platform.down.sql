@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS webhooks;
+DROP TABLE IF EXISTS api_keys;
+DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS notifications;
+DROP TABLE IF EXISTS alerts;
+DROP TABLE IF EXISTS alert_rules;
