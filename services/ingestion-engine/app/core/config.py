@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     nats_url: str = "nats://localhost:4222"
 
+    # Key for decrypting source credentials (AES-256-GCM, hex-encoded).
+    app_encryption_key: str = ""
+
     # Connector safety defaults. All external access is read-only.
     connector_connect_timeout_seconds: float = 10.0
     connector_query_timeout_seconds: float = 30.0

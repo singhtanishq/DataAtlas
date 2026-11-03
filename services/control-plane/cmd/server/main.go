@@ -10,10 +10,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nats-io/nats.go"
+
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/api"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/auth"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/config"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/crypto"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/db"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/sources"
 )
 
 const serverReadHeaderTimeout = 10 * time.Second
@@ -30,7 +34,10 @@ func main() {
 
 	ctx := context.Background()
 
-	var authSvc *auth.Service
+	var (
+		authSvc   *auth.Service
+		sourceSvc *sources.Service
+	)
 	if cfg.DatabaseURL != "" {
 		pool, err := db.NewPool(ctx, cfg.DatabaseURL)
 		if err != nil {
@@ -39,12 +46,36 @@ func main() {
 		}
 		defer pool.Close()
 		authSvc = auth.NewService(pool)
+
+		// Credential encryption and the message broker power the source
+		// registry; both degrade gracefully when unconfigured.
+		if cfg.AppEncryptionKey != "" {
+			cipher, err := crypto.NewCipher(cfg.AppEncryptionKey)
+			if err != nil {
+				logger.Error("invalid APP_ENCRYPTION_KEY", "error", err)
+				os.Exit(1)
+			}
+			var nc *nats.Conn
+			if cfg.NATSURL != "" {
+				nc, err = nats.Connect(cfg.NATSURL, nats.Timeout(5*time.Second), nats.MaxReconnects(-1))
+				if err != nil {
+					logger.Warn("NATS unavailable; connection tests will fail until it returns", "error", err)
+					nc = nil
+				} else {
+					defer nc.Close()
+					logger.Info("connected to NATS", "url", cfg.NATSURL)
+				}
+			}
+			sourceSvc = sources.NewService(pool, cipher, nc)
+		} else {
+			logger.Warn("APP_ENCRYPTION_KEY not set; source registration disabled")
+		}
 		logger.Info("database connection pool established")
 	} else {
 		logger.Warn("DATABASE_URL not set; auth endpoints disabled")
 	}
 
-	handler := api.NewServer(cfg, authSvc, logger)
+	handler := api.NewServer(cfg, authSvc, sourceSvc, logger)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

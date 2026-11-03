@@ -17,27 +17,29 @@ const (
 
 // Config holds all runtime configuration for the control plane.
 type Config struct {
-	AppEnv        string
-	Port          string
-	LogLevel      string
-	Version       string
-	ShutdownGrace time.Duration
-	DatabaseURL   string
-	RedisURL      string
-	NATSURL       string
+	AppEnv           string
+	Port             string
+	LogLevel         string
+	Version          string
+	ShutdownGrace    time.Duration
+	DatabaseURL      string
+	RedisURL         string
+	NATSURL          string
+	AppEncryptionKey string
 }
 
 // Load reads configuration from environment variables, applying defaults.
 func Load() (*Config, error) {
 	cfg := &Config{
-		AppEnv:        envOr("APP_ENV", EnvDevelopment),
-		Port:          envOr("CONTROL_PLANE_PORT", "8080"),
-		LogLevel:      envOr("LOG_LEVEL", "info"),
-		Version:       envOr("APP_VERSION", "0.1.0"),
-		ShutdownGrace: 10 * time.Second,
-		DatabaseURL:   os.Getenv("DATABASE_URL"),
-		RedisURL:      envOr("REDIS_URL", "redis://localhost:6379/0"),
-		NATSURL:       envOr("NATS_URL", "nats://localhost:4222"),
+		AppEnv:           envOr("APP_ENV", EnvDevelopment),
+		Port:             envOr("CONTROL_PLANE_PORT", "8080"),
+		LogLevel:         envOr("LOG_LEVEL", "info"),
+		Version:          envOr("APP_VERSION", "0.1.0"),
+		ShutdownGrace:    10 * time.Second,
+		DatabaseURL:      os.Getenv("DATABASE_URL"),
+		RedisURL:         envOr("REDIS_URL", "redis://localhost:6379/0"),
+		NATSURL:          envOr("NATS_URL", "nats://localhost:4222"),
+		AppEncryptionKey: os.Getenv("APP_ENCRYPTION_KEY"),
 	}
 
 	if cfg.AppEnv != EnvDevelopment && cfg.AppEnv != EnvProduction && cfg.AppEnv != "test" {

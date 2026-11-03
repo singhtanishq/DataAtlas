@@ -16,6 +16,7 @@ import (
 
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/auth"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/config"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/sources"
 )
 
 // SessionCookie is the HTTP-only cookie carrying the opaque session token.
@@ -23,14 +24,15 @@ const SessionCookie = "dataatlas_session"
 
 // Server holds the API dependencies.
 type Server struct {
-	cfg  *config.Config
-	auth *auth.Service
-	log  *slog.Logger
+	cfg     *config.Config
+	auth    *auth.Service
+	sources *sources.Service
+	log     *slog.Logger
 }
 
 // NewServer builds the full HTTP handler.
-func NewServer(cfg *config.Config, authSvc *auth.Service, logger *slog.Logger) http.Handler {
-	s := &Server{cfg: cfg, auth: authSvc, log: logger}
+func NewServer(cfg *config.Config, authSvc *auth.Service, sourceSvc *sources.Service, logger *slog.Logger) http.Handler {
+	s := &Server{cfg: cfg, auth: authSvc, sources: sourceSvc, log: logger}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -54,6 +56,13 @@ func NewServer(cfg *config.Config, authSvc *auth.Service, logger *slog.Logger) h
 		v1.Post("/auth/logout", s.handleLogout)
 		v1.Get("/auth/me", s.handleMe)
 		v1.Post("/auth/organizations/switch", s.handleSwitchOrganization)
+
+		// Data source registry.
+		v1.Post("/sources", s.handleRegisterSource)
+		v1.Get("/sources", s.handleListSources)
+		v1.Get("/sources/{sourceID}", s.handleGetSource)
+		v1.Delete("/sources/{sourceID}", s.handleDeleteSource)
+		v1.Post("/sources/{sourceID}/test", s.handleTestSource)
 	})
 
 	return r

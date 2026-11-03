@@ -16,6 +16,7 @@ dependencies = [
     "nats-py>=2.7",
     "httpx>=0.27",
     "tenacity>=8.3",
+    "cryptography>=50.0.2",
 ]
 
 [dependency-groups]
@@ -51,6 +52,13 @@ warn_unreachable = true
 explicit_package_bases = true
 mypy_path = "."
 
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "nats.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: tests requiring live local infrastructure",
+]
