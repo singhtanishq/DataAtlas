@@ -111,7 +111,7 @@ DataAtlas/
 | Control plane | Go, chi, pgx, PostgreSQL |
 | Ingestion & processing | Python, FastAPI, Pydantic, SQLAlchemy, DuckDB, PyArrow, SQLGlot |
 | Metadata standards | OpenLineage, dbt artifacts |
-| Infrastructure | Docker Compose, PostgreSQL, Redis, NATS JetStream, MinIO, OpenTelemetry, Prometheus, Grafana |
+| Infrastructure | Docker Compose, PostgreSQL, Redis, NATS JetStream, SeaweedFS (S3-compatible object storage), OpenTelemetry, Prometheus, Grafana |
 
 ## Getting Started
 

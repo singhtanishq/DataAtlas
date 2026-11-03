@@ -5,10 +5,19 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 
-.PHONY: help dev web-dev control-plane-dev ingestion-dev test lint build clean
+.PHONY: help infra-up infra-down infra-observability dev web-dev control-plane-dev ingestion-dev test lint build clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-16s\033[0m %s\n", $$1, $$2}'
+
+infra-up: ## Start core local infrastructure (PostgreSQL, Redis, NATS, MinIO)
+	docker compose up -d
+
+infra-observability: ## Start observability stack (OTel collector, Prometheus, Grafana)
+	docker compose --profile observability up -d
+
+infra-down: ## Stop local infrastructure
+	docker compose --profile observability down
 
 dev: ## Run all application services in development mode
 	$(MAKE) -j3 web-dev control-plane-dev ingestion-dev
