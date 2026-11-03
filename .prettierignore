@@ -1,0 +1,10 @@
+node_modules
+.next
+dist
+build
+coverage
+*.tsbuildinfo
+.eslintcache
+.venv
+__pycache__
+.git

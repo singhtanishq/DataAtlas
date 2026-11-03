@@ -1,0 +1,16 @@
+{
+  "name": "dataatlas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DataAtlas — Enterprise Data Intelligence, Catalog, Lineage, Quality & Observability Platform",
+  "packageManager": "pnpm@10.18.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "web:dev": "pnpm --filter @dataatlas/web dev",
+    "web:build": "pnpm --filter @dataatlas/web build",
+    "web:lint": "pnpm --filter @dataatlas/web lint",
+    "web:typecheck": "pnpm --filter @dataatlas/web typecheck"
+  }
+}
