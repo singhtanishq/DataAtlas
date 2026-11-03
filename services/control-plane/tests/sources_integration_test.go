@@ -101,7 +101,7 @@ func newSourcesServer(t *testing.T) *httptest.Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceSvc := sources.NewService(pool, cipher, nil) // no NATS: worker tests live in the Python suite
+	sourceSvc := sources.NewService(pool, cipher, nil, "") // no NATS: worker tests live in the Python suite
 	authSvc := auth.NewService(pool)
 
 	cfg := &config.Config{

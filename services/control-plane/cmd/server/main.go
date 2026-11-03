@@ -66,7 +66,7 @@ func main() {
 					logger.Info("connected to NATS", "url", cfg.NATSURL)
 				}
 			}
-			sourceSvc = sources.NewService(pool, cipher, nc)
+			sourceSvc = sources.NewService(pool, cipher, nc, cfg.NATSURL)
 		} else {
 			logger.Warn("APP_ENCRYPTION_KEY not set; source registration disabled")
 		}

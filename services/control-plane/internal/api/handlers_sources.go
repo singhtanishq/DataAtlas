@@ -27,6 +27,11 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, permission au
 }
 
 func (s *Server) handleRegisterSource(w http.ResponseWriter, r *http.Request) {
+	if s.sources == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "sources_unavailable",
+			"source registry is not configured (APP_ENCRYPTION_KEY missing)")
+		return
+	}
 	id, ok := s.authorize(w, r, auth.PermManageSources)
 	if !ok {
 		return
@@ -50,6 +55,11 @@ func (s *Server) handleRegisterSource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListSources(w http.ResponseWriter, r *http.Request) {
+	if s.sources == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "sources_unavailable",
+			"source registry is not configured (APP_ENCRYPTION_KEY missing)")
+		return
+	}
 	id, ok := s.authorize(w, r, auth.PermRead)
 	if !ok {
 		return
@@ -67,6 +77,11 @@ func (s *Server) handleListSources(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetSource(w http.ResponseWriter, r *http.Request) {
+	if s.sources == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "sources_unavailable",
+			"source registry is not configured (APP_ENCRYPTION_KEY missing)")
+		return
+	}
 	id, ok := s.authorize(w, r, auth.PermRead)
 	if !ok {
 		return
@@ -85,6 +100,11 @@ func (s *Server) handleGetSource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteSource(w http.ResponseWriter, r *http.Request) {
+	if s.sources == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "sources_unavailable",
+			"source registry is not configured (APP_ENCRYPTION_KEY missing)")
+		return
+	}
 	id, ok := s.authorize(w, r, auth.PermManageSources)
 	if !ok {
 		return
@@ -102,6 +122,11 @@ func (s *Server) handleDeleteSource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTestSource(w http.ResponseWriter, r *http.Request) {
+	if s.sources == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "sources_unavailable",
+			"source registry is not configured (APP_ENCRYPTION_KEY missing)")
+		return
+	}
 	id, ok := s.authorize(w, r, auth.PermManageSources)
 	if !ok {
 		return

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,14 +32,33 @@ var ErrSourceNotFound = errors.New("sources: data source not found")
 
 // Service manages registered data sources.
 type Service struct {
-	pool   *db.Pool
-	cipher *crypto.Cipher
-	nats   *nats.Conn
+	pool    *db.Pool
+	cipher  *crypto.Cipher
+	nats    *nats.Conn
+	natsURL string
 }
 
-// NewService builds a sources service.
-func NewService(pool *db.Pool, cipher *crypto.Cipher, nc *nats.Conn) *Service {
-	return &Service{pool: pool, cipher: cipher, nats: nc}
+// NewService builds a sources service. natsURL enables on-demand (re)
+// connection when the broker is unavailable at startup.
+func NewService(pool *db.Pool, cipher *crypto.Cipher, nc *nats.Conn, natsURL string) *Service {
+	return &Service{pool: pool, cipher: cipher, nats: nc, natsURL: natsURL}
+}
+
+// ensureNats reconnects to the broker if the startup connection failed or
+// was lost. Connection attempts are serialized.
+func (s *Service) ensureNats() error {
+	if s.nats != nil && !s.nats.IsClosed() {
+		return nil
+	}
+	if s.natsURL == "" {
+		return fmt.Errorf("message broker not configured")
+	}
+	nc, err := nats.Connect(s.natsURL, nats.Timeout(5*time.Second), nats.MaxReconnects(-1))
+	if err != nil {
+		return fmt.Errorf("message broker unavailable: %w", err)
+	}
+	s.nats = nc
+	return nil
 }
 
 // Source is the API-facing view of a registered data source. Credentials
@@ -89,15 +109,25 @@ func (s *Service) Register(ctx context.Context, organizationID string, in Regist
 	}
 
 	sourceID := uuid.Must(uuid.NewRandom())
+	orgUUID := uuid.MustParse(organizationID)
+	slug := slugify(in.Name)
 	var src Source
 	err = s.pool.WithOrg(ctx, organizationID, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO data_sources (id, organization_id, connector_key, name, slug, status, config)
-			VALUES ($1, $2, $3, $4, $5, 'CONFIGURED', $6)
-			RETURNING id::text, name, slug, status, connector_key, config, created_at, updated_at`,
-			sourceID, uuid.MustParse(organizationID), in.ConnectorKey, in.Name, slugify(in.Name), []byte(in.Config),
-		).Scan(&src.ID, &src.Name, &src.Slug, &src.Status, &src.Connector, &src.Config, &src.CreatedAt, &src.UpdatedAt); err != nil {
-			return err
+		// Guarantee slug uniqueness among the organization's live sources.
+		for i := 0; ; i++ {
+			err := tx.QueryRow(ctx, `
+				INSERT INTO data_sources (id, organization_id, connector_key, name, slug, status, config)
+				VALUES ($1, $2, $3, $4, $5, 'CONFIGURED', $6)
+				RETURNING id::text, name, slug, status, connector_key, config, created_at, updated_at`,
+				sourceID, orgUUID, in.ConnectorKey, in.Name, slug, []byte(in.Config),
+			).Scan(&src.ID, &src.Name, &src.Slug, &src.Status, &src.Connector, &src.Config, &src.CreatedAt, &src.UpdatedAt)
+			if err == nil {
+				break
+			}
+			if i >= 5 || !isUniqueViolation(err) {
+				return err
+			}
+			slug = fmt.Sprintf("%s-%s", slug, uuid.Must(uuid.NewRandom()).String()[:4])
 		}
 
 		if _, err := tx.Exec(ctx, `
@@ -193,11 +223,8 @@ func (s *Service) TestConnection(ctx context.Context, organizationID, sourceID s
 		return ValidateReply{}, err
 	}
 
-	if s.nats == nil {
-		reply := ValidateReply{
-			OK:      false,
-			Message: "connection testing unavailable: message broker not connected",
-		}
+	if err := s.ensureNats(); err != nil {
+		reply := ValidateReply{OK: false, Message: "connection testing unavailable: " + err.Error()}
 		s.setStatus(ctx, organizationID, sourceID, "DISCONNECTED", reply.Message)
 		return reply, nil
 	}
@@ -278,6 +305,10 @@ func slugify(name string) string {
 		slug = slug[:64]
 	}
 	return slug
+}
+
+func isUniqueViolation(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "SQLSTATE 23505")
 }
 
 func bytes_trim(b []byte, cut byte) []byte {
