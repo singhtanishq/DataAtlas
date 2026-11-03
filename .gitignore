@@ -1,1 +1,196 @@
+# ============================================================
+# PRIVATE PROJECT INSTRUCTIONS
+# ============================================================
 DataAtlas.md
+
+# ============================================================
+# ENVIRONMENT AND SECRETS
+# ============================================================
+.env
+.env.*
+!.env.example
+*.env
+*.env.local
+*.env.development.local
+*.env.test.local
+*.env.production.local
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.keystore
+secrets/
+private/
+credentials/
+credentials.json
+service-account.json
+serviceAccountKey.json
+*service-account*.json
+*credentials*.json
+
+# ============================================================
+# NODE / NEXT.JS
+# ============================================================
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+build/
+.turbo/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.eslintcache
+next-env.d.ts
+
+# ============================================================
+# PYTHON
+# ============================================================
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+.eggs/
+wheels/
+pip-wheel-metadata/
+
+# ============================================================
+# GO
+# ============================================================
+*.exe
+*.test
+*.out
+/vendor/
+
+# ============================================================
+# LOCAL DATABASES
+# ============================================================
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.bak
+*.backup
+*.sql.gz
+postgres-data/
+database-data/
+redis-data/
+nats-data/
+minio-data/
+clickhouse-data/
+local-data/
+private-data/
+volumes/
+!tests/**/fixtures/**
+!examples/**/fixtures/**
+
+# ============================================================
+# METADATA INGESTION OUTPUT
+# ============================================================
+ingestion-cache/
+connector-cache/
+metadata-cache/
+staging-data/
+temporary-datasets/
+profile-cache/
+scan-results/
+private-exports/
+raw-ingestion-payloads/
+
+# ============================================================
+# LOCAL OBJECT STORAGE
+# ============================================================
+object-data/
+storage-data/
+uploads/private/
+exports/private/
+
+# ============================================================
+# LOGS AND OBSERVABILITY
+# ============================================================
+logs/
+*.log
+*.log.*
+*.trace
+*.prof
+*.cpuprofile
+*.heapprofile
+tmp/
+temp/
+
+# ============================================================
+# IDE AND OPERATING SYSTEM
+# ============================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ============================================================
+# BUILD AND DEPLOYMENT
+# ============================================================
+.cache/
+.vercel/
+.netlify/
+terraform/.terraform/
+cdk.out/
+
+# ============================================================
+# CLOUD CREDENTIALS
+# ============================================================
+.aws/
+.gcloud/
+.azure/
+.kube/
+.kubeconfig
+kubeconfig
+kubeconfigs/
+
+# ============================================================
+# MODEL AND GENERATED ARTIFACTS
+# ============================================================
+models/
+checkpoints/
+*.safetensors
+*.gguf
+*.onnx
+*.pt
+*.pth
+
+# ============================================================
+# TEST OUTPUT
+# ============================================================
+test-results/
+playwright-report/
+playwright/.cache/
+artifacts/
+*.junit.xml
+*.sarif
+*.lcov
+
+# ============================================================
+# GENERATED DOCUMENTATION OUTPUT
+# ============================================================
+site/
