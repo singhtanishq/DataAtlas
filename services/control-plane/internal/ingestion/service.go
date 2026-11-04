@@ -20,6 +20,8 @@ import (
 const (
 	// DiscoverySubject carries discovery job requests on the INGESTION stream.
 	DiscoverySubject = "ingestion.discover"
+	// ProfileSubject carries dataset profiling jobs on the INGESTION stream.
+	ProfileSubject = "ingestion.profile"
 	// IngestionStream is the JetStream stream backing ingestion jobs.
 	IngestionStream = "INGESTION"
 	// publishTimeout bounds JetStream publishes.
@@ -191,6 +193,188 @@ func (s *Service) ListRuns(ctx context.Context, organizationID, sourceID string)
 			JOIN ingestion_pipelines p ON p.id = r.pipeline_id
 			WHERE p.data_source_id = $1
 			ORDER BY r.created_at DESC LIMIT 50`, sourceID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var run Run
+			if err := rows.Scan(&run.ID, &run.PipelineID, &run.Trigger, &run.Status,
+				&run.StartedAt, &run.FinishedAt, &run.DurationMS, &run.ErrorMessage,
+				&run.Progress, &run.CreatedAt); err != nil {
+				return err
+			}
+			runs = append(runs, run)
+		}
+		return rows.Err()
+	})
+	return runs, err
+}
+
+// ProfileJobRequest is the payload published for profiling runs.
+type ProfileJobRequest struct {
+	RunID          string `json:"run_id"`
+	DatasetID      string `json:"dataset_id"`
+	OrganizationID string `json:"organization_id"`
+}
+
+// TriggerProfile creates a PENDING profiling run for one dataset and
+// publishes the job.
+func (s *Service) TriggerProfile(ctx context.Context, organizationID, datasetID, trigger string) (Run, error) {
+	if err := s.ensureJetStream(); err != nil {
+		return Run{}, err
+	}
+	var pipelineID string
+	err := s.pool.WithOrg(ctx, organizationID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT p.id::text FROM ingestion_pipelines p
+			WHERE p.pipeline_type = 'PROFILE' AND p.data_source_id =
+				(SELECT a.data_source_id FROM datasets d JOIN data_assets a ON a.id = d.asset_id WHERE d.id = $1)
+			  AND p.deleted_at IS NULL LIMIT 1`, datasetID).Scan(&pipelineID)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Profiling piggybacks on the source's discovery pipeline when no
+		// dedicated PROFILE pipeline exists.
+		err = s.pool.WithOrg(ctx, organizationID, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `
+				SELECT p.id::text FROM ingestion_pipelines p
+				WHERE p.pipeline_type = 'METADATA_DISCOVERY' AND p.data_source_id =
+					(SELECT a.data_source_id FROM datasets d JOIN data_assets a ON a.id = d.asset_id WHERE d.id = $1)
+				  AND p.deleted_at IS NULL LIMIT 1`, datasetID).Scan(&pipelineID)
+		})
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, fmt.Errorf("no pipeline for dataset %s", datasetID)
+	}
+	if err != nil {
+		return Run{}, err
+	}
+
+	runID := uuid.Must(uuid.NewRandom())
+	payload, err := json.Marshal(ProfileJobRequest{
+		RunID: runID.String(), DatasetID: datasetID, OrganizationID: organizationID,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
+	err = s.pool.WithOrg(ctx, organizationID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO ingestion_runs (id, pipeline_id, organization_id, trigger, status)
+			VALUES ($1, $2, $3, $4, 'PENDING')`,
+			runID, uuid.MustParse(pipelineID), uuid.MustParse(organizationID), trigger)
+		return err
+	})
+	if err != nil {
+		return Run{}, err
+	}
+	if err := s.ensureStream(); err != nil {
+		return Run{}, err
+	}
+	if _, err := s.js.Publish(ProfileSubject, payload, nats.MsgId(runID.String())); err != nil {
+		return Run{}, fmt.Errorf("publish profile job: %w", err)
+	}
+	return s.GetRun(ctx, organizationID, runID.String())
+}
+
+// ProfileMetric is one stored measurement for a column.
+type ProfileMetric struct {
+	MetricName string   `json:"metric_name"`
+	Value      *float64 `json:"value"`
+	ValueText  *string  `json:"value_text"`
+	ValueType  string   `json:"value_type"`
+}
+
+// ColumnProfile is the profile of one column in the latest run.
+type ColumnProfile struct {
+	ColumnID string          `json:"column_id"`
+	Name     string          `json:"name"`
+	DataType string          `json:"data_type"`
+	Metrics  []ProfileMetric `json:"metrics"`
+}
+
+// ProfileSnapshotView is the latest profile of a dataset.
+type ProfileSnapshotView struct {
+	SnapshotID  string          `json:"snapshot_id"`
+	RunID       string          `json:"run_id"`
+	ExecutedAt  time.Time       `json:"executed_at"`
+	RowCount    *int64          `json:"row_count"`
+	ColumnCount *int32          `json:"column_count"`
+	Columns     []ColumnProfile `json:"columns"`
+}
+
+// LatestProfile returns the most recent profiling snapshot with metrics.
+func (s *Service) LatestProfile(ctx context.Context, organizationID, datasetID string) (ProfileSnapshotView, error) {
+	var view ProfileSnapshotView
+	err := s.pool.WithOrg(ctx, organizationID, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `
+			SELECT ps.id::text, ps.profiling_run_id::text, ps.created_at,
+			       ps.row_count, ps.column_count
+			FROM profile_snapshots ps
+			JOIN datasets d ON d.id = ps.dataset_id
+			WHERE d.id = $1 AND d.deleted_at IS NULL
+			ORDER BY ps.created_at DESC LIMIT 1`, datasetID,
+		).Scan(&view.SnapshotID, &view.RunID, &view.ExecutedAt, &view.RowCount, &view.ColumnCount)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrRunNotFound
+		}
+		if err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `
+			SELECT c.id::text, c.name, c.data_type,
+			       m.metric_name, m.metric_value, m.metric_value_text, m.value_type
+			FROM column_profiles m
+			JOIN dataset_columns c ON c.id = m.dataset_column_id
+			WHERE m.profiling_run_id = (
+				SELECT profiling_run_id FROM profile_snapshots WHERE id = $1
+			)
+			ORDER BY c.ordinal, m.metric_name`, view.SnapshotID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		byColumn := map[string]*ColumnProfile{}
+		for rows.Next() {
+			var colID, name, dataType, metricName, valueType string
+			var value *float64
+			var valueText *string
+			if err := rows.Scan(&colID, &name, &dataType, &metricName, &value, &valueText, &valueType); err != nil {
+				return err
+			}
+			cp, ok := byColumn[colID]
+			if !ok {
+				cp = &ColumnProfile{ColumnID: colID, Name: name, DataType: dataType}
+				byColumn[colID] = cp
+			}
+			cp.Metrics = append(cp.Metrics, ProfileMetric{
+				MetricName: metricName, Value: value, ValueText: valueText, ValueType: valueType,
+			})
+		}
+		for _, cp := range byColumn {
+			view.Columns = append(view.Columns, *cp)
+		}
+		return rows.Err()
+	})
+	return view, err
+}
+
+// ProfileHistory returns the execution history of a dataset's profiles.
+func (s *Service) ProfileHistory(ctx context.Context, organizationID, datasetID string) ([]Run, error) {
+	var runs []Run
+	err := s.pool.WithOrg(ctx, organizationID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT r.id::text, r.pipeline_id::text, r.trigger, r.status, r.started_at,
+			       r.finished_at, r.duration_ms, r.error_message, r.progress, r.created_at
+			FROM ingestion_runs r
+			WHERE r.organization_id = $1
+			  AND EXISTS (
+			    SELECT 1 FROM profiling_runs pr
+			    JOIN datasets d ON d.id = pr.dataset_id
+			    WHERE pr.ingestion_run_id = r.id AND d.id = $2
+			  )
+			ORDER BY r.created_at DESC LIMIT 50`,
+			uuid.MustParse(organizationID), uuid.MustParse(datasetID))
 		if err != nil {
 			return err
 		}

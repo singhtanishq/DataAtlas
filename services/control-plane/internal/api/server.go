@@ -83,6 +83,11 @@ func NewServer(
 		v1.Post("/catalog/datasets/{datasetID}/owners", s.handleAssignOwner)
 		v1.Post("/catalog/datasets/{datasetID}/tags", s.handleAddTag)
 		v1.Delete("/catalog/datasets/{datasetID}/tags/{tagID}", s.handleRemoveTag)
+
+		// Profiling.
+		v1.Post("/catalog/datasets/{datasetID}/profile", s.handleTriggerProfile)
+		v1.Get("/catalog/datasets/{datasetID}/profile", s.handleLatestProfile)
+		v1.Get("/catalog/datasets/{datasetID}/profiles", s.handleProfileHistory)
 	})
 
 	return r

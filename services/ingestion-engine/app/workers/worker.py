@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any
 
 import asyncpg
@@ -30,6 +31,7 @@ logger = logging.getLogger("dataatlas.worker")
 
 VALIDATE_SUBJECT = "dataatlas.ingestion.validate_connection"
 DISCOVERY_SUBJECT = "ingestion.discover"
+PROFILE_SUBJECT = "ingestion.profile"
 INGESTION_STREAM = "INGESTION"
 WORKER_QUEUE = "ingestion-workers"
 WORKER_DURABLE = "ingestion-workers"
@@ -79,14 +81,26 @@ class IngestionWorker:
         sub = await js.pull_subscribe(
             DISCOVERY_SUBJECT, durable=WORKER_DURABLE, stream=INGESTION_STREAM
         )
-        logger.info("discovery consumer ready", extra={"subject": DISCOVERY_SUBJECT})
+        profile_sub = await js.pull_subscribe(
+            PROFILE_SUBJECT, durable=WORKER_DURABLE + "-profile", stream=INGESTION_STREAM
+        )
+        logger.info(
+            "consumers ready",
+            extra={"subjects": [DISCOVERY_SUBJECT, PROFILE_SUBJECT]},
+        )
         while not stop.is_set():
             try:
                 msgs = await sub.fetch(1, timeout=5)
             except TimeoutError:
-                continue
+                msgs = []
             for msg in msgs:
                 await self._handle_discovery(msg)
+            try:
+                pmsgs = await profile_sub.fetch(1, timeout=1)
+            except TimeoutError:
+                pmsgs = []
+            for msg in pmsgs:
+                await self._handle_profile(msg)
 
     async def stop(self) -> None:
         if self._nc is not None:
@@ -255,6 +269,161 @@ class IngestionWorker:
             database_name=database_name,
         )
         return summary
+
+    async def _handle_profile(self, msg: Msg) -> None:
+        """Profile one dataset and store the results."""
+        try:
+            request = json.loads(msg.data)
+        except json.JSONDecodeError:
+            await msg.ack()
+            return
+        run_id = request.get("run_id")
+        dataset_id = request.get("dataset_id")
+        organization_id = request.get("organization_id")
+        if not (run_id and dataset_id and organization_id):
+            await msg.ack()
+            return
+
+        try:
+            await self.profile_dataset(run_id, dataset_id, organization_id)
+            await msg.ack()
+            logger.info("profiling completed", extra={"run_id": run_id})
+        except Exception as exc:
+            logger.exception("profiling failed", extra={"run_id": run_id})
+            await self._finish_run(run_id, organization_id, "FAILED", str(exc)[:500], None)
+            await msg.nak(delay=10)
+
+    async def profile_dataset(self, run_id: str, dataset_id: str, organization_id: str) -> None:
+        """Profile one catalog dataset and persist results."""
+        from app.profiling.profiler import DatasetProfiler
+
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_organization_id', $1, true)",
+                    organization_id,
+                )
+                row = await conn.fetchrow(
+                    """
+                    SELECT d.id::text, a.namespace, a.name, ds.config AS source_config,
+                           sc.ciphertext, sc.nonce
+                    FROM datasets d
+                    JOIN data_assets a ON a.id = d.asset_id
+                    JOIN data_sources ds ON ds.id = a.data_source_id
+                    JOIN source_credentials sc ON sc.data_source_id = ds.id
+                    WHERE d.id = $1 AND d.deleted_at IS NULL
+                    """,
+                    dataset_id,
+                )
+        if row is None:
+            raise RuntimeError("dataset or source credentials not found")
+        credentials = self.cipher.decrypt_json(bytes(row["ciphertext"]), bytes(row["nonce"]))
+        raw_config = row["source_config"]
+        config = raw_config if isinstance(raw_config, dict) else json.loads(raw_config or "{}")
+
+        # Connect to the source database with read-only session defaults.
+        from app.connectors.postgres import PostgreSQLConnector
+
+        connector = PostgreSQLConnector(config=config, credentials=credentials)
+        conn_kwargs = connector._connection_kwargs()  # noqa: SLF001 - internal reuse
+        # Columns come from the catalog (metadata database), profiling from
+        # the source database; the two never mix connections. The catalog
+        # read is transaction-bound to the tenant for RLS.
+        async with self._pool.acquire() as meta:
+            async with meta.transaction():
+                await meta.execute(
+                    "SELECT set_config('app.current_organization_id', $1, true)",
+                    organization_id,
+                )
+                columns = await meta.fetch(
+                    """
+                    SELECT c.name, c.data_type FROM dataset_columns c
+                    WHERE c.dataset_id = $1 AND c.status = 'ACTIVE'
+                    ORDER BY c.ordinal
+                    """,
+                    uuid.UUID(dataset_id),
+                )
+        src = await asyncpg.connect(**conn_kwargs)
+        try:
+            profiler = DatasetProfiler(src)
+            result = await profiler.profile_dataset(
+                row["namespace"], row["name"], columns
+            )
+        finally:
+            await src.close()
+        result.dataset_id = dataset_id
+
+        await self._store_profile(run_id, organization_id, result)
+
+    async def _store_profile(self, run_id: str, organization_id: str, result: Any) -> None:
+        assert self._pool is not None
+        snapshot = json.dumps(result.as_dict(), default=str)
+        methods = {"row_count": result.row_count_method or "inferred"}
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_organization_id', $1, true)",
+                    organization_id,
+                )
+                # The profiling run is the analytical record; it links back to
+                # the operational ingestion run via ingestion_run_id.
+                profiling_run_id = await conn.fetchval(
+                    """
+                    INSERT INTO profiling_runs
+                        (dataset_id, organization_id, ingestion_run_id, status,
+                         scan_strategy, scanned_rows, finished_at, duration_ms)
+                    VALUES ($1, $2, $3, 'SUCCEEDED', 'SAMPLE', $4, now(), $5)
+                    RETURNING id
+                    """,
+                    uuid.UUID(result.dataset_id), uuid.UUID(organization_id),
+                    uuid.UUID(run_id), result.row_count, result.duration_ms,
+                )
+                snapshot_id = await conn.fetchval(
+                    """
+                    INSERT INTO profile_snapshots
+                        (profiling_run_id, dataset_id, organization_id, row_count,
+                         column_count, metrics, metric_method)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    RETURNING id
+                    """,
+                    profiling_run_id, uuid.UUID(result.dataset_id),
+                    uuid.UUID(organization_id), result.row_count,
+                    result.column_count, snapshot, json.dumps(methods),
+                )
+                for col in result.columns:
+                    col_row = await conn.fetchval(
+                        """
+                        SELECT id FROM dataset_columns
+                        WHERE dataset_id = $1 AND name = $2 AND status = 'ACTIVE'
+                        """,
+                        uuid.UUID(result.dataset_id), col.name,
+                    )
+                    if col_row is None:
+                        continue
+                    for m in col.metrics:
+                        value = m["value"]
+                        await conn.execute(
+                            """
+                            INSERT INTO column_profiles
+                                (profiling_run_id, dataset_column_id, organization_id,
+                                 metric_name, metric_value, metric_value_text, value_type)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7)
+                            """,
+                            profiling_run_id, col_row, uuid.UUID(organization_id),
+                            m["metric_name"],
+                            float(value) if isinstance(value, (int, float)) else None,
+                            (
+                                None
+                                if isinstance(value, (int, float))
+                                else json.dumps(value, default=str)
+                            ),
+                            m["value_type"].upper(),
+                        )
+        logger.info(
+            "profile stored",
+            extra={"run_id": run_id, "snapshot_id": str(snapshot_id)},
+        )
 
     async def _set_run_status(self, run_id: str, organization_id: str, status: str) -> None:
         assert self._pool is not None

@@ -43,7 +43,10 @@ select = ["E", "F", "I", "W", "UP", "B", "S", "ASYNC"]
 ignore = ["S101"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S105", "S106"]
+"tests/**" = ["S105", "S106", "S608"]
+# The profiler interpolates schema-qualified identifiers into sampling
+# queries. Identifiers are validated and quoted; parameters are bound.
+"app/profiling/**" = ["S608"]
 
 [tool.mypy]
 python_version = "3.13"
