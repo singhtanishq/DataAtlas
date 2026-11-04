@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     connector_max_rows: int = 100_000
     profiler_sample_rows: int = 100_000
     profiler_row_limit: int = 1_000_000
+    quality_max_rows: int = 100_000
 
 
 @lru_cache

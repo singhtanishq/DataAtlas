@@ -19,6 +19,7 @@ import (
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/crypto"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/db"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/ingestion"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/quality"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/sources"
 )
 
@@ -41,6 +42,7 @@ func main() {
 		sourceSvc    *sources.Service
 		ingestionSvc *ingestion.Service
 		catalogSvc   *catalog.Service
+		qualitySvc   *quality.Service
 	)
 	if cfg.DatabaseURL != "" {
 		pool, err := db.NewPool(ctx, cfg.DatabaseURL)
@@ -81,6 +83,7 @@ func main() {
 				}
 			}
 			ingestionSvc = ingestion.NewService(pool, js, cfg.NATSURL)
+			qualitySvc = quality.NewService(pool, js, cfg.NATSURL)
 		} else {
 			logger.Warn("APP_ENCRYPTION_KEY not set; source registration disabled")
 		}
@@ -90,7 +93,7 @@ func main() {
 		logger.Warn("DATABASE_URL not set; auth endpoints disabled")
 	}
 
-	handler := api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, catalogSvc, logger)
+	handler := api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, catalogSvc, qualitySvc, logger)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

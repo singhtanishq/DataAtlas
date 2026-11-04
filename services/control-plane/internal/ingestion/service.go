@@ -22,6 +22,8 @@ const (
 	DiscoverySubject = "ingestion.discover"
 	// ProfileSubject carries dataset profiling jobs on the INGESTION stream.
 	ProfileSubject = "ingestion.profile"
+	// QualitySubject carries quality execution jobs on the INGESTION stream.
+	QualitySubject = "ingestion.quality"
 	// IngestionStream is the JetStream stream backing ingestion jobs.
 	IngestionStream = "INGESTION"
 	// publishTimeout bounds JetStream publishes.

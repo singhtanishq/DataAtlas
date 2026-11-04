@@ -44,9 +44,11 @@ ignore = ["S101"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106", "S608"]
-# The profiler interpolates schema-qualified identifiers into sampling
-# queries. Identifiers are validated and quoted; parameters are bound.
+# The profiler and quality engine interpolate schema-qualified identifiers
+# into sampling queries. Identifiers are validated and quoted; all values
+# are bound parameters.
 "app/profiling/**" = ["S608"]
+"app/quality/**" = ["S608"]
 
 [tool.mypy]
 python_version = "3.13"

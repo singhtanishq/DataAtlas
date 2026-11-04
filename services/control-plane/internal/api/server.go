@@ -18,6 +18,7 @@ import (
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/catalog"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/config"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/ingestion"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/quality"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/sources"
 )
 
@@ -31,16 +32,18 @@ type Server struct {
 	sources   *sources.Service
 	ingestion *ingestion.Service
 	catalog   *catalog.Service
+	quality   *quality.Service
 	log       *slog.Logger
 }
 
 // NewServer builds the full HTTP handler.
 func NewServer(
 	cfg *config.Config, authSvc *auth.Service, sourceSvc *sources.Service,
-	ingestionSvc *ingestion.Service, catalogSvc *catalog.Service, logger *slog.Logger,
+	ingestionSvc *ingestion.Service, catalogSvc *catalog.Service,
+	qualitySvc *quality.Service, logger *slog.Logger,
 ) http.Handler {
 	s := &Server{cfg: cfg, auth: authSvc, sources: sourceSvc, ingestion: ingestionSvc,
-		catalog: catalogSvc, log: logger}
+		catalog: catalogSvc, quality: qualitySvc, log: logger}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -88,6 +91,14 @@ func NewServer(
 		v1.Post("/catalog/datasets/{datasetID}/profile", s.handleTriggerProfile)
 		v1.Get("/catalog/datasets/{datasetID}/profile", s.handleLatestProfile)
 		v1.Get("/catalog/datasets/{datasetID}/profiles", s.handleProfileHistory)
+
+		// Quality.
+		v1.Post("/quality/checks", s.handleCreateCheck)
+		v1.Get("/quality/checks", s.handleListChecks)
+		v1.Patch("/quality/checks/{checkID}", s.handleUpdateCheck)
+		v1.Delete("/quality/checks/{checkID}", s.handleDeleteCheck)
+		v1.Post("/quality/runs", s.handleTriggerQualityRun)
+		v1.Get("/quality/runs/{runID}", s.handleGetQualityRun)
 	})
 
 	return r

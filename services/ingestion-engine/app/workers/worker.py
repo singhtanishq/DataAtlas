@@ -32,6 +32,7 @@ logger = logging.getLogger("dataatlas.worker")
 VALIDATE_SUBJECT = "dataatlas.ingestion.validate_connection"
 DISCOVERY_SUBJECT = "ingestion.discover"
 PROFILE_SUBJECT = "ingestion.profile"
+QUALITY_SUBJECT = "ingestion.quality"
 INGESTION_STREAM = "INGESTION"
 WORKER_QUEUE = "ingestion-workers"
 WORKER_DURABLE = "ingestion-workers"
@@ -84,9 +85,12 @@ class IngestionWorker:
         profile_sub = await js.pull_subscribe(
             PROFILE_SUBJECT, durable=WORKER_DURABLE + "-profile", stream=INGESTION_STREAM
         )
+        quality_sub = await js.pull_subscribe(
+            QUALITY_SUBJECT, durable=WORKER_DURABLE + "-quality", stream=INGESTION_STREAM
+        )
         logger.info(
             "consumers ready",
-            extra={"subjects": [DISCOVERY_SUBJECT, PROFILE_SUBJECT]},
+            extra={"subjects": [DISCOVERY_SUBJECT, PROFILE_SUBJECT, QUALITY_SUBJECT]},
         )
         while not stop.is_set():
             try:
@@ -101,6 +105,12 @@ class IngestionWorker:
                 pmsgs = []
             for msg in pmsgs:
                 await self._handle_profile(msg)
+            try:
+                qmsgs = await quality_sub.fetch(1, timeout=1)
+            except TimeoutError:
+                qmsgs = []
+            for msg in qmsgs:
+                await self._handle_quality(msg)
 
     async def stop(self) -> None:
         if self._nc is not None:
@@ -424,6 +434,162 @@ class IngestionWorker:
             "profile stored",
             extra={"run_id": run_id, "snapshot_id": str(snapshot_id)},
         )
+
+    async def _handle_quality(self, msg: Msg) -> None:
+        """Execute a quality run: all enabled checks for the organization."""
+        try:
+            request = json.loads(msg.data)
+        except json.JSONDecodeError:
+            await msg.ack()
+            return
+        run_id = request.get("run_id")
+        organization_id = request.get("organization_id")
+        if not (run_id and organization_id):
+            await msg.ack()
+            return
+
+        try:
+            summary = await self.run_quality(run_id, organization_id)
+            await self._finish_run(run_id, organization_id, "SUCCEEDED", None, summary)
+            await msg.ack()
+            logger.info("quality run completed", extra={"run_id": run_id})
+        except Exception as exc:
+            logger.exception("quality run failed", extra={"run_id": run_id})
+            await self._finish_run(run_id, organization_id, "FAILED", str(exc)[:500], None)
+            await msg.nak(delay=10)
+
+    async def run_quality(self, run_id: str, organization_id: str) -> dict[str, Any]:
+        """Execute every enabled quality check in the organization."""
+        from app.quality.engine import QualityEngine
+
+        assert self._pool is not None
+        async with self._pool.acquire() as meta:
+            async with meta.transaction():
+                await meta.execute(
+                    "SELECT set_config('app.current_organization_id', $1, true)",
+                    organization_id,
+                )
+                checks = await meta.fetch(
+                    """
+                    SELECT qc.id::text, qc.check_type, qc.target_column,
+                           qc.parameters, qc.severity, qc.dataset_id::text,
+                           a.name AS table_name, a.namespace AS schema_name,
+                           ds.config AS source_config, sc.ciphertext, sc.nonce
+                    FROM quality_checks qc
+                    JOIN datasets d ON d.id = qc.dataset_id
+                    JOIN data_assets a ON a.id = d.asset_id
+                    JOIN data_sources ds ON ds.id = a.data_source_id
+                    JOIN source_credentials sc ON sc.data_source_id = ds.id
+                    WHERE qc.enabled = true AND qc.deleted_at IS NULL
+                      AND d.deleted_at IS NULL
+                    """
+                )
+        if not checks:
+            return {"checks_executed": 0}
+
+        # Group checks by source credentials (each dataset has one source).
+        by_source: dict[bytes, list[dict[str, Any]]] = {}
+        for row in checks:
+            key = bytes(row["ciphertext"])
+            by_source.setdefault(key, []).append(dict(row))
+
+        executed = 0
+        passed = 0
+        failed = 0
+        errored = 0
+
+        # The analytical run record lives in quality_runs; results reference it.
+        async with self._pool.acquire() as meta:
+            async with meta.transaction():
+                await meta.execute(
+                    "SELECT set_config('app.current_organization_id', $1, true)",
+                    organization_id,
+                )
+                quality_run_id = await meta.fetchval(
+                    """
+                    INSERT INTO quality_runs (organization_id, trigger, status, started_at)
+                    VALUES ($1, 'API', 'RUNNING', now())
+                    RETURNING id
+                    """,
+                    uuid.UUID(organization_id),
+                )
+
+        for checks_for_source in by_source.values():
+            first = checks_for_source[0]
+            credentials = self.cipher.decrypt_json(
+                bytes(first["ciphertext"]), bytes(first["nonce"])
+            )
+            raw_config = first["source_config"]
+            config = raw_config if isinstance(raw_config, dict) else json.loads(raw_config or "{}")
+            from app.connectors.postgres import PostgreSQLConnector
+
+            connector = PostgreSQLConnector(config=config, credentials=credentials)
+            src = await asyncpg.connect(**connector._connection_kwargs())  # noqa: SLF001
+            try:
+                engine = QualityEngine(src)
+                for check in checks_for_source:
+                    outcome = await engine.execute_check(check)
+                    await self._store_quality_result(
+                        quality_run_id, organization_id, check, outcome
+                    )
+                    executed += 1
+                    if outcome.status == "PASSED":
+                        passed += 1
+                    elif outcome.status == "ERROR":
+                        errored += 1
+                    else:
+                        failed += 1
+            finally:
+                await src.close()
+
+        async with self._pool.acquire() as meta:
+            async with meta.transaction():
+                await meta.execute(
+                    "SELECT set_config('app.current_organization_id', $1, true)",
+                    organization_id,
+                )
+                await meta.execute(
+                    """
+                    UPDATE quality_runs SET status = 'SUCCEEDED', finished_at = now(),
+                        duration_ms = GREATEST(
+                            (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::bigint, 0)
+                    WHERE id = $1
+                    """,
+                    quality_run_id,
+                )
+        return {
+            "checks_executed": executed,
+            "checks_passed": passed,
+            "checks_failed": failed,
+            "checks_errored": errored,
+            "quality_run_id": str(quality_run_id),
+        }
+
+    async def _store_quality_result(
+        self, quality_run_id: uuid.UUID, organization_id: str,
+        check: dict[str, Any], outcome: Any,
+    ) -> None:
+        assert self._pool is not None
+        actual = json.dumps(outcome.actual, default=str)
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_organization_id', $1, true)",
+                    organization_id,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO quality_results
+                        (quality_run_id, check_id, dataset_id, organization_id,
+                         status, rows_evaluated, rows_failed, actual_value,
+                         error_message, duration_ms)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    """,
+                    quality_run_id, uuid.UUID(outcome.check_id),
+                    uuid.UUID(check["dataset_id"]), uuid.UUID(organization_id),
+                    outcome.status, outcome.rows_evaluated, outcome.rows_failed,
+                    actual, outcome.error_message, outcome.duration_ms,
+                )
 
     async def _set_run_status(self, run_id: str, organization_id: str, status: str) -> None:
         assert self._pool is not None
