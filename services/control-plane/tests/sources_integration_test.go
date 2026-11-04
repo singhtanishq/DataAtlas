@@ -103,7 +103,7 @@ func newSourcesServer(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	sourceSvc := sources.NewService(pool, cipher, nil, "") // no NATS: worker tests live in the Python suite
-	ingestionSvc := ingestion.NewService(pool, nil)
+	ingestionSvc := ingestion.NewService(pool, nil, "")
 	authSvc := auth.NewService(pool)
 
 	cfg := &config.Config{
@@ -112,7 +112,7 @@ func newSourcesServer(t *testing.T) *httptest.Server {
 		Version:          "test",
 		AppEncryptionKey: testEncryptionKey,
 	}
-	srv := httptest.NewServer(api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, slog.Default()))
+	srv := httptest.NewServer(api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, nil, slog.Default()))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -129,7 +129,12 @@ func newSourcesClient(t *testing.T, srv *httptest.Server) *sourcesClient {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &sourcesClient{t: t, base: srv.URL, client: &http.Client{Jar: jar}}
+	return &sourcesClient{t: t, base: srv.URL, client: newHTTPClientWithJar(jar)}
+}
+
+// newHTTPClientWithJar builds an HTTP client sharing the test cookie jar.
+func newHTTPClientWithJar(jar *cookiejar.Jar) *http.Client {
+	return &http.Client{Jar: jar}
 }
 
 func (c *sourcesClient) do(method, path string, body any) (*http.Response, map[string]any) {

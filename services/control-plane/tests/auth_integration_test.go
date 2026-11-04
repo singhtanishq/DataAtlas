@@ -95,7 +95,7 @@ func newAuthServer(t *testing.T) *httptest.Server {
 		Version: "test",
 	}
 	authSvc := auth.NewService(pool)
-	srv := httptest.NewServer(api.NewServer(cfg, authSvc, nil, nil, slog.Default()))
+	srv := httptest.NewServer(api.NewServer(cfg, authSvc, nil, nil, nil, slog.Default()))
 	t.Cleanup(srv.Close)
 	return srv
 }

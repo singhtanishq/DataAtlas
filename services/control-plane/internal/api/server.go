@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/auth"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/catalog"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/config"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/ingestion"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/sources"
@@ -29,15 +30,17 @@ type Server struct {
 	auth      *auth.Service
 	sources   *sources.Service
 	ingestion *ingestion.Service
+	catalog   *catalog.Service
 	log       *slog.Logger
 }
 
 // NewServer builds the full HTTP handler.
 func NewServer(
 	cfg *config.Config, authSvc *auth.Service, sourceSvc *sources.Service,
-	ingestionSvc *ingestion.Service, logger *slog.Logger,
+	ingestionSvc *ingestion.Service, catalogSvc *catalog.Service, logger *slog.Logger,
 ) http.Handler {
-	s := &Server{cfg: cfg, auth: authSvc, sources: sourceSvc, ingestion: ingestionSvc, log: logger}
+	s := &Server{cfg: cfg, auth: authSvc, sources: sourceSvc, ingestion: ingestionSvc,
+		catalog: catalogSvc, log: logger}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -71,6 +74,15 @@ func NewServer(
 		v1.Post("/sources/{sourceID}/discover", s.handleTriggerDiscovery)
 		v1.Get("/sources/{sourceID}/runs", s.handleListSourceRuns)
 		v1.Get("/ingestion/runs/{runID}", s.handleGetRun)
+
+		// Catalog.
+		v1.Get("/catalog/datasets", s.handleSearchDatasets)
+		v1.Get("/catalog/datasets/{datasetID}", s.handleDatasetDetails)
+		v1.Get("/catalog/datasets/{datasetID}/columns", s.handleDatasetColumns)
+		v1.Patch("/catalog/datasets/{datasetID}", s.handleUpdateDatasetDescription)
+		v1.Post("/catalog/datasets/{datasetID}/owners", s.handleAssignOwner)
+		v1.Post("/catalog/datasets/{datasetID}/tags", s.handleAddTag)
+		v1.Delete("/catalog/datasets/{datasetID}/tags/{tagID}", s.handleRemoveTag)
 	})
 
 	return r

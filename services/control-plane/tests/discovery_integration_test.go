@@ -112,7 +112,7 @@ func TestDiscoveryTriggerLifecycle(t *testing.T) {
 		t.Fatalf("source seed invalid: %v", err)
 	}
 
-	ingestionSvc := ingestion.NewService(pool, js)
+	ingestionSvc := ingestion.NewService(pool, js, natsURLForTests())
 
 	run, err := ingestionSvc.TriggerDiscovery(ctx, orgID, sourceID, "MANUAL")
 	if err != nil {
