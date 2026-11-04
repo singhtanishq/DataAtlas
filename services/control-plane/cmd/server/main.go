@@ -17,6 +17,7 @@ import (
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/config"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/crypto"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/db"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/ingestion"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/sources"
 )
 
@@ -35,8 +36,9 @@ func main() {
 	ctx := context.Background()
 
 	var (
-		authSvc   *auth.Service
-		sourceSvc *sources.Service
+		authSvc      *auth.Service
+		sourceSvc    *sources.Service
+		ingestionSvc *ingestion.Service
 	)
 	if cfg.DatabaseURL != "" {
 		pool, err := db.NewPool(ctx, cfg.DatabaseURL)
@@ -67,6 +69,16 @@ func main() {
 				}
 			}
 			sourceSvc = sources.NewService(pool, cipher, nc, cfg.NATSURL)
+
+			// Discovery runs publish durable jobs through JetStream; the
+			// service reconnects lazily when the broker was down at boot.
+			var js nats.JetStreamContext
+			if nc != nil {
+				if jsCtx, jsErr := nc.JetStream(); jsErr == nil {
+					js = jsCtx
+				}
+			}
+			ingestionSvc = ingestion.NewService(pool, js, cfg.NATSURL)
 		} else {
 			logger.Warn("APP_ENCRYPTION_KEY not set; source registration disabled")
 		}
@@ -75,7 +87,7 @@ func main() {
 		logger.Warn("DATABASE_URL not set; auth endpoints disabled")
 	}
 
-	handler := api.NewServer(cfg, authSvc, sourceSvc, logger)
+	handler := api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, logger)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

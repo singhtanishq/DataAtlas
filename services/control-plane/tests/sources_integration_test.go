@@ -27,6 +27,7 @@ import (
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/config"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/crypto"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/db"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/ingestion"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/sources"
 )
 
@@ -102,6 +103,7 @@ func newSourcesServer(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	sourceSvc := sources.NewService(pool, cipher, nil, "") // no NATS: worker tests live in the Python suite
+	ingestionSvc := ingestion.NewService(pool, nil)
 	authSvc := auth.NewService(pool)
 
 	cfg := &config.Config{
@@ -110,7 +112,7 @@ func newSourcesServer(t *testing.T) *httptest.Server {
 		Version:          "test",
 		AppEncryptionKey: testEncryptionKey,
 	}
-	srv := httptest.NewServer(api.NewServer(cfg, authSvc, sourceSvc, slog.Default()))
+	srv := httptest.NewServer(api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, slog.Default()))
 	t.Cleanup(srv.Close)
 	return srv
 }

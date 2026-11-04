@@ -16,6 +16,7 @@ import (
 
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/auth"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/config"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/ingestion"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/sources"
 )
 
@@ -24,15 +25,19 @@ const SessionCookie = "dataatlas_session"
 
 // Server holds the API dependencies.
 type Server struct {
-	cfg     *config.Config
-	auth    *auth.Service
-	sources *sources.Service
-	log     *slog.Logger
+	cfg       *config.Config
+	auth      *auth.Service
+	sources   *sources.Service
+	ingestion *ingestion.Service
+	log       *slog.Logger
 }
 
 // NewServer builds the full HTTP handler.
-func NewServer(cfg *config.Config, authSvc *auth.Service, sourceSvc *sources.Service, logger *slog.Logger) http.Handler {
-	s := &Server{cfg: cfg, auth: authSvc, sources: sourceSvc, log: logger}
+func NewServer(
+	cfg *config.Config, authSvc *auth.Service, sourceSvc *sources.Service,
+	ingestionSvc *ingestion.Service, logger *slog.Logger,
+) http.Handler {
+	s := &Server{cfg: cfg, auth: authSvc, sources: sourceSvc, ingestion: ingestionSvc, log: logger}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -63,6 +68,9 @@ func NewServer(cfg *config.Config, authSvc *auth.Service, sourceSvc *sources.Ser
 		v1.Get("/sources/{sourceID}", s.handleGetSource)
 		v1.Delete("/sources/{sourceID}", s.handleDeleteSource)
 		v1.Post("/sources/{sourceID}/test", s.handleTestSource)
+		v1.Post("/sources/{sourceID}/discover", s.handleTriggerDiscovery)
+		v1.Get("/sources/{sourceID}/runs", s.handleListSourceRuns)
+		v1.Get("/ingestion/runs/{runID}", s.handleGetRun)
 	})
 
 	return r

@@ -3,6 +3,10 @@
 The worker is the only component that decrypts source credentials. Secrets
 never travel through the broker: workers receive a source id, load the
 encrypted credentials from PostgreSQL, and decrypt locally.
+
+Two consumption paths:
+- validate_connection requests (core NATS request/reply)
+- durable discovery jobs (JetStream pull consumer with explicit acks)
 """
 
 from __future__ import annotations
@@ -25,11 +29,14 @@ from app.core.crypto import CredentialCipher
 logger = logging.getLogger("dataatlas.worker")
 
 VALIDATE_SUBJECT = "dataatlas.ingestion.validate_connection"
+DISCOVERY_SUBJECT = "ingestion.discover"
+INGESTION_STREAM = "INGESTION"
 WORKER_QUEUE = "ingestion-workers"
+WORKER_DURABLE = "ingestion-workers"
 
 
 class IngestionWorker:
-    """NATS request/reply worker for connector operations."""
+    """NATS worker for connector operations."""
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -52,13 +59,85 @@ class IngestionWorker:
         )
         logger.info("worker subscribed", extra={"subject": VALIDATE_SUBJECT})
 
+    async def run_discovery_loop(self, stop: asyncio.Event) -> None:
+        """Consume durable discovery jobs until stop is set."""
+        js = self._nc.jetstream()
+        try:
+            await js.add_stream(name=INGESTION_STREAM, subjects=["ingestion.>"])
+        except Exception:  # noqa: BLE001 - stream already exists
+            logger.debug("stream exists", extra={"stream": INGESTION_STREAM})
+        try:
+            await js.add_consumer(
+                INGESTION_STREAM,
+                durable=WORKER_DURABLE,
+                ack_policy="explicit",
+                max_deliver=5,
+                ack_wait=300,
+            )
+        except Exception:  # noqa: BLE001 - consumer already exists
+            logger.debug("consumer exists", extra={"durable": WORKER_DURABLE})
+        sub = await js.pull_subscribe(
+            DISCOVERY_SUBJECT, durable=WORKER_DURABLE, stream=INGESTION_STREAM
+        )
+        logger.info("discovery consumer ready", extra={"subject": DISCOVERY_SUBJECT})
+        while not stop.is_set():
+            try:
+                msgs = await sub.fetch(1, timeout=5)
+            except TimeoutError:
+                continue
+            for msg in msgs:
+                await self._handle_discovery(msg)
+
     async def stop(self) -> None:
         if self._nc is not None:
             await self._nc.drain()
         if self._pool is not None:
             await self._pool.close()
 
-    # -- request handling --------------------------------------------------
+    # -- shared source loading ----------------------------------------------
+
+    async def _load_source(
+        self, source_id: str, organization_id: str
+    ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+        """Load connector key, config and decrypted credentials for a source.
+
+        The tenant context is transaction-local by design; the read runs in
+        one transaction so RLS sees it and it cannot leak into later reuses
+        of this pooled connection.
+        """
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_organization_id', $1, true)",
+                    organization_id,
+                )
+                row = await conn.fetchrow(
+                    """
+                    SELECT ds.connector_key, ds.config, sc.ciphertext, sc.nonce
+                    FROM data_sources ds
+                    JOIN source_credentials sc ON sc.data_source_id = ds.id
+                    WHERE ds.id = $1 AND ds.deleted_at IS NULL
+                    """,
+                    source_id,
+                )
+        if row is None:
+            return None
+        try:
+            credentials = self.cipher.decrypt_json(
+                bytes(row["ciphertext"]), bytes(row["nonce"])
+            )
+        except Exception as exc:
+            logger.warning("credential decryption failed", extra={"error": str(exc)})
+            return None
+        raw_config = row["config"]
+        if isinstance(raw_config, dict):
+            config: dict[str, Any] = raw_config
+        else:
+            config = json.loads(raw_config or "{}")
+        return row["connector_key"], config, credentials
+
+    # -- connection validation (request/reply) -------------------------------
 
     async def _handle_validate(self, msg: Msg) -> None:
         try:
@@ -66,11 +145,12 @@ class IngestionWorker:
         except json.JSONDecodeError:
             await msg.respond(b'{"ok": false, "message": "invalid request payload"}')
             return
-
         source_id = request.get("source_id")
         organization_id = request.get("organization_id")
         if not source_id or not organization_id:
-            await msg.respond(b'{"ok": false, "message": "source_id and organization_id required"}')
+            await msg.respond(
+                b'{"ok": false, "message": "source_id and organization_id required"}'
+            )
             return
 
         result = await self.validate_source_connection(source_id, organization_id)
@@ -86,46 +166,19 @@ class IngestionWorker:
         self, source_id: str, organization_id: str
     ) -> ConnectorResult:
         """Load a source's credentials and validate its connection."""
-        assert self._pool is not None
         started = time.monotonic()
-        async with self._pool.acquire() as conn:
-            # The tenant context is transaction-local by design; run the
-            # read inside one transaction so RLS sees it and it cannot leak
-            # into later reuses of this pooled connection.
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT set_config('app.current_organization_id', $1, true)",
-                    organization_id,
-                )
-                row = await conn.fetchrow(
-                    """
-                    SELECT ds.connector_key, ds.config,
-                           sc.ciphertext, sc.nonce
-                    FROM data_sources ds
-                    JOIN source_credentials sc ON sc.data_source_id = ds.id
-                    WHERE ds.id = $1 AND ds.deleted_at IS NULL
-                    """,
-                    source_id,
-                )
-        if row is None:
-            return ConnectorResult(ok=False, message="source not found")
+        loaded = await self._load_source(source_id, organization_id)
+        if loaded is None:
+            return ConnectorResult(
+                ok=False, message="source not found or credentials unreadable"
+            )
+        connector_key, config, credentials = loaded
 
         try:
-            credentials = self.cipher.decrypt_json(bytes(row["ciphertext"]), bytes(row["nonce"]))
-        except Exception as exc:
-            logger.warning("credential decryption failed", extra={"error": str(exc)})
-            return ConnectorResult(ok=False, message="credential decryption failed")
-
-        try:
-            connector_cls = get_connector_class(row["connector_key"])
+            connector_cls = get_connector_class(connector_key)
         except LookupError as exc:
             return ConnectorResult(ok=False, message=str(exc))
 
-        raw_config = row["config"]
-        if isinstance(raw_config, dict):
-            config = raw_config
-        else:
-            config = json.loads(raw_config or "{}")
         connector = connector_cls(config=config, credentials=credentials)
         try:
             result = await asyncio.wait_for(
@@ -139,17 +192,126 @@ class IngestionWorker:
             )
         return result
 
+    # -- discovery jobs (JetStream durable) -----------------------------------
+
+    async def _handle_discovery(self, msg: Msg) -> None:
+        """Process one durable discovery job end to end."""
+        try:
+            request = json.loads(msg.data)
+        except json.JSONDecodeError:
+            await msg.ack()
+            return
+        run_id = request.get("run_id")
+        source_id = request.get("source_id")
+        organization_id = request.get("organization_id")
+        if not (run_id and source_id and organization_id):
+            await msg.ack()
+            return
+
+        await self._set_run_status(run_id, organization_id, "RUNNING")
+        try:
+            summary = await self.run_discovery(source_id, organization_id)
+            await self._finish_run(run_id, organization_id, "SUCCEEDED", None, summary)
+            await msg.ack()
+            logger.info(
+                "discovery completed",
+                extra={"run_id": run_id, "summary": summary.as_dict()},
+            )
+        except Exception as exc:
+            logger.exception("discovery failed", extra={"run_id": run_id})
+            await self._finish_run(run_id, organization_id, "FAILED", str(exc)[:500], None)
+            # Requeue for redelivery; the consumer caps at max_deliver.
+            await msg.nak(delay=10)
+
+    async def run_discovery(self, source_id: str, organization_id: str) -> Any:
+        """Full metadata discovery + catalog application for one source."""
+        from app.connectors.postgres import PostgreSQLConnector
+        from app.discovery.postgres_discovery import PostgreSQLDiscovery
+        from app.metadata.apply import ApplySummary, CatalogApplier
+
+        loaded = await self._load_source(source_id, organization_id)
+        if loaded is None:
+            raise RuntimeError("source not found or credentials unreadable")
+        connector_key, config, credentials = loaded
+        connector_cls = get_connector_class(connector_key)
+        connector = connector_cls(config=config, credentials=credentials)
+
+        if not isinstance(connector, PostgreSQLConnector):
+            raise RuntimeError(f"connector {connector_key} does not support discovery yet")
+
+        allowed_schemas = config.get("schemas") or None
+        discovery = PostgreSQLDiscovery(
+            connector._connection_kwargs(), allowed_schemas=allowed_schemas
+        )
+        datasets = await discovery.discover_datasets()
+        for ds in datasets:
+            ds.columns = await discovery.discover_columns(ds.namespace, ds.name)
+        fk_targets = await discovery.foreign_key_targets()
+
+        database_name: str | None = config.get("database")
+        applier = CatalogApplier(self._pool)
+        summary: ApplySummary = await applier.apply_discovery(
+            organization_id, source_id, database_name, datasets, fk_targets,
+            database_name=database_name,
+        )
+        return summary
+
+    async def _set_run_status(self, run_id: str, organization_id: str, status: str) -> None:
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_organization_id', $1, true)",
+                    organization_id,
+                )
+                await conn.execute(
+                    """
+                    UPDATE ingestion_runs SET status = $2,
+                        started_at = COALESCE(started_at, now())
+                    WHERE id = $1
+                    """,
+                    run_id, status,
+                )
+
+    async def _finish_run(
+        self, run_id: str, organization_id: str, status: str,
+        error_message: str | None, summary: Any,
+    ) -> None:
+        assert self._pool is not None
+        progress = json.dumps(summary.as_dict()) if summary else "{}"
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_organization_id', $1, true)",
+                    organization_id,
+                )
+                await conn.execute(
+                    """
+                    UPDATE ingestion_runs SET status = $2, finished_at = now(),
+                        duration_ms = GREATEST(
+                            (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::bigint, 0),
+                        error_message = $3, progress = $4
+                    WHERE id = $1
+                    """,
+                    run_id, status, error_message, progress,
+                )
+
 
 async def main() -> None:  # pragma: no cover - process entrypoint
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+    )
     worker = IngestionWorker()
     await worker.start()
     stop = asyncio.Event()
+    loop_task = asyncio.create_task(worker.run_discovery_loop(stop))
     try:
         await stop.wait()
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
+        stop.set()
+        loop_task.cancel()
         await worker.stop()
 
 
