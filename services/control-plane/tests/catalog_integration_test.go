@@ -71,7 +71,7 @@ func newCatalogServer(t *testing.T) (*httptest.Server, *sourcesClient) {
 	catalogSvc := catalog.NewService(pool)
 	authSvc := auth.NewService(pool)
 	cfg := &config.Config{AppEnv: config.EnvDevelopment, Version: "test"}
-	srv := httptest.NewServer(api.NewServer(cfg, authSvc, nil, nil, catalogSvc, nil, nil, nil, slog.Default()))
+	srv := httptest.NewServer(api.NewServer(cfg, authSvc, nil, nil, catalogSvc, nil, nil, nil, nil, slog.Default()))
 	t.Cleanup(srv.Close)
 
 	jar, _ := cookiejar.New(nil)

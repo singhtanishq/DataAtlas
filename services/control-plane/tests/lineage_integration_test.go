@@ -69,7 +69,7 @@ func newLineageServer(t *testing.T) (*httptest.Server, *sourcesClient) {
 	cfg := &config.Config{AppEnv: config.EnvDevelopment, Version: "test"}
 	srv := httptest.NewServer(api.NewServer(cfg, authSvc, nil, nil,
 		catalog.NewService(pool), quality.NewService(pool, nil, ""),
-		lineage.NewService(pool), nil, slog.Default()))
+		lineage.NewService(pool), nil, nil, slog.Default()))
 	t.Cleanup(srv.Close)
 
 	jar, _ := cookiejar.New(nil)

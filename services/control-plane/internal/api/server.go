@@ -17,6 +17,7 @@ import (
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/auth"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/catalog"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/config"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/governance"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/ingestion"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/lineage"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/observability"
@@ -37,6 +38,7 @@ type Server struct {
 	quality   *quality.Service
 	lineage   *lineage.Service
 	obs       *observability.Service
+	gov       *governance.Service
 	log       *slog.Logger
 }
 
@@ -45,10 +47,11 @@ func NewServer(
 	cfg *config.Config, authSvc *auth.Service, sourceSvc *sources.Service,
 	ingestionSvc *ingestion.Service, catalogSvc *catalog.Service,
 	qualitySvc *quality.Service, lineageSvc *lineage.Service,
-	obsSvc *observability.Service, logger *slog.Logger,
+	obsSvc *observability.Service, govSvc *governance.Service, logger *slog.Logger,
 ) http.Handler {
 	s := &Server{cfg: cfg, auth: authSvc, sources: sourceSvc, ingestion: ingestionSvc,
-		catalog: catalogSvc, quality: qualitySvc, lineage: lineageSvc, obs: obsSvc, log: logger}
+		catalog: catalogSvc, quality: qualitySvc, lineage: lineageSvc, obs: obsSvc,
+		gov: govSvc, log: logger}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -117,6 +120,16 @@ func NewServer(
 		v1.Get("/observability/health", s.handlePipelineHealth)
 		v1.Get("/freshness", s.handleFreshness)
 		v1.Post("/catalog/datasets/{datasetID}/freshness", s.handleSetFreshnessExpectation)
+
+		// Governance.
+		v1.Post("/glossary/terms", s.handleCreateGlossaryTerm)
+		v1.Get("/glossary/terms", s.handleListGlossaryTerms)
+		v1.Post("/glossary/terms/{termID}/assets", s.handleAttachGlossaryTerm)
+		v1.Get("/assets/{assetID}/terms", s.handleAssetTerms)
+		v1.Post("/assets/{assetID}/classifications", s.handleSetAssetClassification)
+		v1.Get("/assets/{assetID}/classifications", s.handleAssetClassifications)
+		v1.Post("/catalog/columns/{columnID}/classifications", s.handleSetColumnClassification)
+		v1.Get("/audit-logs", s.handleListAudit)
 	})
 
 	return r
