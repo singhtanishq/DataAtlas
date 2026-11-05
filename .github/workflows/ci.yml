@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Build
+        run: go build ./...
+        working-directory: services/control-plane
+      - name: Vet
+        run: go vet ./...
+        working-directory: services/control-plane
+      - name: Test (unit)
+        run: go test ./...
+        working-directory: services/control-plane
+
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [services/ingestion-engine, services/sdk-python]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Lint
+        run: uv run ruff check .
+        working-directory: ${{ matrix.service }}
+      - name: Typecheck
+        run: |
+          if [ -d app ]; then uv run mypy app; else uv run mypy dataatlas; fi
+        working-directory: ${{ matrix.service }}
+      - name: Test (unit; integration tests auto-skip without infra)
+        run: uv run pytest -q
+        working-directory: ${{ matrix.service }}
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm --filter @dataatlas/web typecheck
+      - name: Lint
+        run: pnpm --filter @dataatlas/web lint
+      - name: Build
+        run: pnpm --filter @dataatlas/web build
