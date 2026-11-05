@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from app.connectors.base import DataConnector
+from app.connectors.file_connector import CSVConnector, ParquetConnector
 from app.connectors.postgres import PostgreSQLConnector
 
 _REGISTRY: dict[str, type[DataConnector]] = {
     PostgreSQLConnector.connector_key: PostgreSQLConnector,
+    CSVConnector.connector_key: CSVConnector,
+    ParquetConnector.connector_key: ParquetConnector,
 }
 
 
