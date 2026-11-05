@@ -112,7 +112,7 @@ func newSourcesServer(t *testing.T) *httptest.Server {
 		Version:          "test",
 		AppEncryptionKey: testEncryptionKey,
 	}
-	srv := httptest.NewServer(api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, nil, nil, nil, slog.Default()))
+	srv := httptest.NewServer(api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, nil, nil, nil, nil, slog.Default()))
 	t.Cleanup(srv.Close)
 	return srv
 }

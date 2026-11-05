@@ -20,6 +20,7 @@ import (
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/db"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/ingestion"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/lineage"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/observability"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/quality"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/sources"
 )
@@ -45,6 +46,7 @@ func main() {
 		catalogSvc   *catalog.Service
 		qualitySvc   *quality.Service
 		lineageSvc   *lineage.Service
+		obsSvc       *observability.Service
 	)
 	if cfg.DatabaseURL != "" {
 		pool, err := db.NewPool(ctx, cfg.DatabaseURL)
@@ -95,7 +97,7 @@ func main() {
 		logger.Warn("DATABASE_URL not set; auth endpoints disabled")
 	}
 
-	handler := api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, catalogSvc, qualitySvc, lineageSvc, logger)
+	handler := api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, catalogSvc, qualitySvc, lineageSvc, obsSvc, logger)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

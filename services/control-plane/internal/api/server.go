@@ -19,6 +19,7 @@ import (
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/config"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/ingestion"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/lineage"
+	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/observability"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/quality"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/sources"
 )
@@ -35,6 +36,7 @@ type Server struct {
 	catalog   *catalog.Service
 	quality   *quality.Service
 	lineage   *lineage.Service
+	obs       *observability.Service
 	log       *slog.Logger
 }
 
@@ -42,10 +44,11 @@ type Server struct {
 func NewServer(
 	cfg *config.Config, authSvc *auth.Service, sourceSvc *sources.Service,
 	ingestionSvc *ingestion.Service, catalogSvc *catalog.Service,
-	qualitySvc *quality.Service, lineageSvc *lineage.Service, logger *slog.Logger,
+	qualitySvc *quality.Service, lineageSvc *lineage.Service,
+	obsSvc *observability.Service, logger *slog.Logger,
 ) http.Handler {
 	s := &Server{cfg: cfg, auth: authSvc, sources: sourceSvc, ingestion: ingestionSvc,
-		catalog: catalogSvc, quality: qualitySvc, lineage: lineageSvc, log: logger}
+		catalog: catalogSvc, quality: qualitySvc, lineage: lineageSvc, obs: obsSvc, log: logger}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -107,6 +110,13 @@ func NewServer(
 		v1.Post("/lineage/dbt/manifest", s.handleIngestDBTManifest)
 		v1.Get("/lineage/{assetID}/{direction}", s.handleLineageTraverse)
 		v1.Get("/lineage/{assetID}/impact", s.handleImpactAnalysis)
+
+		// Pipeline observability.
+		v1.Get("/jobs", s.handleListJobs)
+		v1.Get("/jobs/{jobID}/runs", s.handleListJobRuns)
+		v1.Get("/observability/health", s.handlePipelineHealth)
+		v1.Get("/freshness", s.handleFreshness)
+		v1.Post("/catalog/datasets/{datasetID}/freshness", s.handleSetFreshnessExpectation)
 	})
 
 	return r
