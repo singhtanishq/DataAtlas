@@ -146,3 +146,69 @@ func (s *Server) handleSetFreshnessExpectation(w http.ResponseWriter, r *http.Re
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "recorded"})
 }
+
+func (s *Server) handleListAlerts(w http.ResponseWriter, r *http.Request) {
+	_, ok := s.authorize(w, r, auth.PermRead)
+	if !ok {
+		return
+	}
+	identity, _ := IdentityFrom(r.Context())
+	alerts, err := s.obs.ListAlerts(r.Context(), identity.OrganizationID, r.URL.Query().Get("status"))
+	if err != nil {
+		s.log.Error("alert listing failed", "error", err)
+		writeError(w, r, http.StatusInternalServerError, "internal", "could not list alerts")
+		return
+	}
+	if alerts == nil {
+		alerts = []observability.Alert{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"alerts": alerts})
+}
+
+func (s *Server) handleAcknowledgeAlert(w http.ResponseWriter, r *http.Request) {
+	id, ok := s.authorize(w, r, auth.PermManageQuality)
+	if !ok {
+		return
+	}
+	alertID := chi.URLParam(r, "alertID")
+	if _, err := uuid.Parse(alertID); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "invalid alert id")
+		return
+	}
+	if err := s.obs.AcknowledgeAlert(r.Context(), id.OrganizationID, alertID); err != nil {
+		if errors.Is(err, observability.ErrNotFound) {
+			writeError(w, r, http.StatusNotFound, "not_found", "open alert not found")
+			return
+		}
+		s.log.Error("alert acknowledge failed", "error", err)
+		writeError(w, r, http.StatusInternalServerError, "internal", "could not acknowledge alert")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged"})
+}
+
+func (s *Server) handleResolveAlert(w http.ResponseWriter, r *http.Request) {
+	id, ok := s.authorize(w, r, auth.PermManageQuality)
+	if !ok {
+		return
+	}
+	alertID := chi.URLParam(r, "alertID")
+	if _, err := uuid.Parse(alertID); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "invalid alert id")
+		return
+	}
+	var in struct {
+		Note string `json:"note"`
+	}
+	_ = decodeJSON(r, &in) // body optional
+	if err := s.obs.ResolveAlert(r.Context(), id.OrganizationID, alertID, in.Note); err != nil {
+		if errors.Is(err, observability.ErrNotFound) {
+			writeError(w, r, http.StatusNotFound, "not_found", "unresolved alert not found")
+			return
+		}
+		s.log.Error("alert resolve failed", "error", err)
+		writeError(w, r, http.StatusInternalServerError, "internal", "could not resolve alert")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "resolved"})
+}

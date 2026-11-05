@@ -532,6 +532,20 @@ class IngestionWorker:
                     await self._store_quality_result(
                         quality_run_id, organization_id, check, outcome
                     )
+                    if outcome.status == "FAILED":
+                        await self._raise_alert(
+                            organization_id,
+                            alert_type="QUALITY_CHECK_FAILURE",
+                            severity=str(check.get("severity") or "ERROR"),
+                            title=f"Quality check failed: {check.get('name', outcome.check_id)}",
+                            summary=(
+                                f"{outcome.rows_failed} of {outcome.rows_evaluated} rows "
+                                f"failed check {check.get('name', outcome.check_id)}"
+                            ),
+                            entity_type="dataset",
+                            entity_id=check.get("dataset_id"),
+                            dedupe_key=f"quality:{outcome.check_id}",
+                        )
                     executed += 1
                     if outcome.status == "PASSED":
                         passed += 1
@@ -564,6 +578,33 @@ class IngestionWorker:
             "checks_errored": errored,
             "quality_run_id": str(quality_run_id),
         }
+
+    async def _raise_alert(
+        self, organization_id: str, alert_type: str, severity: str,
+        title: str, summary: str, entity_type: str | None,
+        entity_id: str | None, dedupe_key: str,
+    ) -> None:
+        """Create an alert unless an unresolved duplicate exists."""
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_organization_id', $1, true)",
+                    organization_id,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO alerts
+                        (organization_id, alert_type, severity, title, summary,
+                         entity_type, entity_id, dedupe_key)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    ON CONFLICT (organization_id, dedupe_key) WHERE status <> 'RESOLVED'
+                    DO UPDATE SET updated_at = now(), summary = EXCLUDED.summary
+                    """,
+                    uuid.UUID(organization_id), alert_type, severity, title,
+                    summary, entity_type,
+                    uuid.UUID(entity_id) if entity_id else None, dedupe_key,
+                )
 
     async def _store_quality_result(
         self, quality_run_id: uuid.UUID, organization_id: str,

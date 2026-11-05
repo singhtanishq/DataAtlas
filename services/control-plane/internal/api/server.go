@@ -130,6 +130,11 @@ func NewServer(
 		v1.Get("/assets/{assetID}/classifications", s.handleAssetClassifications)
 		v1.Post("/catalog/columns/{columnID}/classifications", s.handleSetColumnClassification)
 		v1.Get("/audit-logs", s.handleListAudit)
+
+		// Alerts.
+		v1.Get("/alerts", s.handleListAlerts)
+		v1.Post("/alerts/{alertID}/acknowledge", s.handleAcknowledgeAlert)
+		v1.Post("/alerts/{alertID}/resolve", s.handleResolveAlert)
 	})
 
 	return r
