@@ -69,6 +69,22 @@ class DataAtlas:
             return None
         return response.json()
 
+    # -- resource namespaces -----------------------------------------------
+
+    @property
+    def lineage(self) -> Any:
+        """Lineage event operations."""
+        from dataatlas.lineage import LineageResource
+
+        return LineageResource(self)
+
+    @property
+    def datasets(self) -> Any:
+        """Catalog dataset operations."""
+        from dataatlas.lineage import DatasetsResource
+
+        return DatasetsResource(self)
+
     def health(self) -> dict[str, Any]:
         """Return the control-plane health payload."""
         result: dict[str, Any] = self._request("GET", "/healthz")
