@@ -598,7 +598,8 @@ class IngestionWorker:
                         (organization_id, alert_type, severity, title, summary,
                          entity_type, entity_id, dedupe_key)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                    ON CONFLICT (organization_id, dedupe_key) WHERE status <> 'RESOLVED'
+                    ON CONFLICT (organization_id, dedupe_key)
+                    WHERE dedupe_key IS NOT NULL AND status <> 'RESOLVED'
                     DO UPDATE SET updated_at = now(), summary = EXCLUDED.summary
                     """,
                     uuid.UUID(organization_id), alert_type, severity, title,
