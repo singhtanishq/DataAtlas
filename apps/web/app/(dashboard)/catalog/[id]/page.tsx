@@ -121,7 +121,7 @@ export default function DatasetDetailPage() {
           <div className="surface stat-card"><div className="label">Rows</div><div className="value">{formatNumber(d.row_count)}</div><div className="text-dim" style={{ fontSize: 11 }}>{d.row_count_method ?? ""}</div></div>
           <div className="surface stat-card"><div className="label">Columns</div><div className="value">{formatNumber(d.column_count)}</div></div>
           <div className="surface stat-card"><div className="label">Schema version</div><div className="value">{d.current_schema_version ?? "—"}</div></div>
-          <div className="surface stat-card"><div className="label">Owners</div><div className="value">{d.owners.length}</div></div>
+          <div className="surface stat-card"><div className="label">Owners</div><div className="value">{(d.owners ?? []).length}</div></div>
         </div>
       )}
 
@@ -250,10 +250,10 @@ export default function DatasetDetailPage() {
           </div>
           <div className="surface" style={{ padding: 16, display: "grid", gap: 8 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700 }}>Owners</h3>
-            {d.owners.length === 0 ? (
+            {(d.owners ?? []).length === 0 ? (
               <p className="text-dim" style={{ fontSize: 13 }}>No owners assigned.</p>
             ) : (
-              d.owners.map((o) => (
+              (d.owners ?? []).map((o) => (
                 <div key={o.assignment_id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
                   <span>{o.user_name ?? o.team_name ?? "unknown"}</span>
                   <span className="badge badge-blue">{o.ownership_role}</span>
@@ -264,10 +264,10 @@ export default function DatasetDetailPage() {
           <div className="surface" style={{ padding: 16, display: "grid", gap: 8 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700 }}>Tags</h3>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {d.tags.length === 0 ? (
+              {(d.tags ?? []).length === 0 ? (
                 <span className="text-dim" style={{ fontSize: 13 }}>No tags.</span>
               ) : (
-                d.tags.map((t) => <span key={t.id} className="badge badge-gray">{t.name}</span>)
+                (d.tags ?? []).map((t) => <span key={t.id} className="badge badge-gray">{t.name}</span>)
               )}
             </div>
           </div>

@@ -94,6 +94,9 @@ func main() {
 			logger.Warn("APP_ENCRYPTION_KEY not set; source registration disabled")
 		}
 		catalogSvc = catalog.NewService(pool)
+		lineageSvc = lineage.NewService(pool)
+		obsSvc = observability.NewService(pool)
+		govSvc = governance.NewService(pool)
 		logger.Info("database connection pool established")
 	} else {
 		logger.Warn("DATABASE_URL not set; auth endpoints disabled")

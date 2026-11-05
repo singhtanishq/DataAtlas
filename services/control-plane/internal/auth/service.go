@@ -167,18 +167,25 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (Identity, str
 			return err
 		}
 
-		// Guarantee slug uniqueness among live organizations.
-		for i := 0; ; i++ {
-			_, err := tx.Exec(ctx, `
-				INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3)`,
-				orgID, in.OrganizationName, slug)
-			if err == nil {
-				break
-			}
-			if i >= 5 || !isUniqueViolation(err) {
+		// Guarantee slug uniqueness among live organizations before the
+		// insert: a unique violation inside the transaction aborts it, so
+		// retries must happen up front.
+		for i := 0; i < 5; i++ {
+			var taken bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM organizations WHERE slug = $1 AND deleted_at IS NULL)`,
+				slug).Scan(&taken); err != nil {
 				return err
 			}
+			if !taken {
+				break
+			}
 			slug = fmt.Sprintf("%s-%s", slug, shortID(4))
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3)`,
+			orgID, in.OrganizationName, slug); err != nil {
+			return err
 		}
 
 		if _, err := tx.Exec(ctx, `

@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/auth"
 	"github.com/singhtanishq/DataAtlas/services/control-plane/internal/catalog"
@@ -54,6 +55,15 @@ func NewServer(
 		gov: govSvc, log: logger}
 
 	r := chi.NewRouter()
+	// The dashboard (Next.js) calls this API cross-origin in development.
+	// Credentials are session cookies, so the origin allowlist matters.
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:3000", "http://127.0.0.1:3000"},
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(s.requestLogger(s.log))
