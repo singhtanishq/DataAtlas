@@ -112,7 +112,7 @@ func newSourcesServer(t *testing.T) *httptest.Server {
 		Version:          "test",
 		AppEncryptionKey: testEncryptionKey,
 	}
-	srv := httptest.NewServer(api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, nil, nil, slog.Default()))
+	srv := httptest.NewServer(api.NewServer(cfg, authSvc, sourceSvc, ingestionSvc, nil, nil, nil, slog.Default()))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -139,21 +139,25 @@ func newHTTPClientWithJar(jar *cookiejar.Jar) *http.Client {
 
 func (c *sourcesClient) do(method, path string, body any) (*http.Response, map[string]any) {
 	c.t.Helper()
-	var reader *bytes.Reader
+	var raw []byte
 	if body != nil {
-		raw, err := json.Marshal(body)
+		marshaled, err := json.Marshal(body)
 		if err != nil {
 			c.t.Fatal(err)
 		}
-		reader = bytes.NewReader(raw)
-	} else {
-		reader = bytes.NewReader(nil)
+		raw = marshaled
 	}
-	req, err := http.NewRequest(method, c.base+path, reader)
+	return c.doRaw(method, path, raw)
+}
+
+// doRaw sends a request with a raw JSON body.
+func (c *sourcesClient) doRaw(method, path string, raw []byte) (*http.Response, map[string]any) {
+	c.t.Helper()
+	req, err := http.NewRequest(method, c.base+path, bytes.NewReader(raw))
 	if err != nil {
 		c.t.Fatal(err)
 	}
-	if body != nil {
+	if len(raw) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.client.Do(req)
