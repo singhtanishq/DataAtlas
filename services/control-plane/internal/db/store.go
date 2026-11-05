@@ -31,6 +31,21 @@ func NewPool(ctx context.Context, databaseURL string) (*Pool, error) {
 	return &Pool{pool}, nil
 }
 
+// WithOrgAdmin runs fn inside a plain transaction with no tenant GUC.
+// Use only for registry/global metadata (e.g. connector definitions) that
+// is not organization-scoped.
+func (p *Pool) WithOrgAdmin(ctx context.Context, fn func(pgx.Tx) error) error {
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // WithOrg runs fn inside a transaction whose Row-Level Security tenant
 // context is bound to organizationID.
 func (p *Pool) WithOrg(ctx context.Context, organizationID string, fn func(pgx.Tx) error) error {

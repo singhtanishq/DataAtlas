@@ -93,6 +93,9 @@ func main() {
 		} else {
 			logger.Warn("APP_ENCRYPTION_KEY not set; source registration disabled")
 		}
+		if err := sources.SeedConnectorDefinitions(ctx, pool); err != nil {
+			logger.Warn("connector definition seed failed", "error", err)
+		}
 		catalogSvc = catalog.NewService(pool)
 		lineageSvc = lineage.NewService(pool)
 		obsSvc = observability.NewService(pool)
